@@ -6,13 +6,7 @@ import random
 from utils import PostgresQueryWithRows
 
 
-
 class Config(luigi.Config):
-    """
-    Luigi configuration file containing information such as PostgreSQL connection details, database table names etc
-    """
-    date = 'luigi.DateParameter()'
-
     host = 'db'
     database = 'dw'
     user = 'postgres'
@@ -25,95 +19,48 @@ class CopyToTableBase(CopyToTable):
     user = Config.user
     password = Config.password
 
-
-class Clean(luigi.Task):
-    def requires(self):
-        return None
-    def output(self):
-        return luigi.LocalTarget('Clean.txt')
-    def run(self):
-        with self.output().open('w') as outfile:
-            outfile.write('Hello World!\n')
+    def rows(self):
+        for row in self.input().rows:
+            yield row
 
 
+class GetTracktSoldData(PostgresQueryWithRows):
+    version = luigi.IntParameter()
 
-
-class GetData(PostgresQueryWithRows):
     host = Config.host
     database = "postgres"
     user = Config.user
     password = Config.password
     table = "Artist"
-    query = '''SELECT "Name", "ArtistId", "ArtistId" as ArtistIde
-    FROM "source"."Artist";'''
-
-    # def output(self):
-    #     return luigi.LocalTarget("top_artists.tsv")
-
-    # def run(self):
-
-    #     # write a dummy list of words to output file
-    #     words = [
-    #             'apple',
-    #             'banana',
-    #             'grapefruit'
-    #             ]
-
-    #     with self.output().open('w') as f:
-    #         for word in words:
-    #             f.write('{word}\n'.format(word=word))
-
-    # @property
-    # def update_id(self):
-    #     import random
-    #     return random.randint(0,10000)
+    query = '''SELECT t."Name" as "Name", t."AlbumId" as "AlbumId", il."UnitPrice" as "InvoiceUnitPrice"
+                FROM "source"."Track" as t
+                inner join "source"."InvoiceLine" as il ON t."TrackId" = il."TrackId";'''
 
 
-
-class CreateTables(CopyToTableBase):
+class PopulateTracktSold(CopyToTableBase):
+    database = "dw"
     version = luigi.IntParameter()
 
-    table = 'test_table'
+    table = 'fact_track_sold'
 
-    columns = (('test_text', 'text'),
-               ('test_int', 'int'),
-               ('test_float', 'float'))
+    columns = (('Name', 'text'),
+               ('AlbumId', 'int'),
+               ('InvoiceUnitPrice', 'int'))
 
     def create_table(self, connection):
         connection.cursor().execute(
-            "CREATE TABLE {table} (id SERIAL PRIMARY KEY, test_text TEXT, test_int INT, test_float FLOAT)"
+            """CREATE TABLE {table} (id SERIAL PRIMARY KEY, "Name" TEXT, "AlbumId" INT, "InvoiceUnitPrice" FLOAT);"""
             .format(table=self.table))
 
     def requires(self):
-        return GetData()
-
-
-    def rows(self):
-        """
-        Return/yield tuples or lists corresponding to each row to be inserted.
-        """
-        # with self.input().open('r') as fobj:
-        #     for line in fobj:
-        #         yield line.strip('\n').split('\t')
-        # raise Exception('for row in self.input().rows:', self.input().rows)
-        for row in self.input().rows:
-            # raise Exception(row)
-            print(row)
-            yield row
-
-    # def rows(self):
-    #     yield 'foo', 123, 123.45
-    #     yield None, '-100', '5143.213'
-    #     yield '\t\n\r\\N', 0, 0
-    #     yield u'éцү我', 0, 0
-    #     yield '', 0, r'\N'  # Test working default null charcter
+        return GetTracktSoldData(self.version)
 
 
 class MainFlow(luigi.Task):
     version = luigi.IntParameter()
 
     def requires(self):
-        return CreateTables(self.version)
+        return PopulateTracktSold(self.version)
 
 
 if __name__ == '__main__':
